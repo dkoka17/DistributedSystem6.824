@@ -6,20 +6,33 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
+import (
+    "os"
+    "time"
+)
 import "strconv"
 
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
-
-type ExampleArgs struct {
-	X int
+type worker struct {
+    UUID   string
+    Status string
+    // tasks timeout
+    TaskTimeout time.Time
+    Task        *task
+}
+type task struct {
+    Action string
+    File   string
 }
 
-type ExampleReply struct {
-	Y int
+type Args struct {
+    Worker *worker
+}
+
+type Reply struct {
+    ReduceNumb int
+    MapFinishBool bool
+    AllFinishBool bool
+    NextWorker *worker
 }
 
 // Add your RPC definitions here.
@@ -30,7 +43,7 @@ type ExampleReply struct {
 // Can't use the current directory since
 // Athena AFS doesn't support UNIX-domain sockets.
 func masterSock() string {
-	s := "/var/tmp/824-mr-"
-	s += strconv.Itoa(os.Getuid())
-	return s
+    s := "/var/tmp/824-mr-"
+    s += strconv.Itoa(os.Getuid())
+    return s
 }
