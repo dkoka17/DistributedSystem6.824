@@ -41,9 +41,9 @@ import "time"
 //
 
 const (
-    Follower           = 1
-    Candidate          = 2
-    Leader             = 3
+    Follower            = 1
+    Candidate           = 2
+    Leader              = 3
     HEART_BEAT_TIMEOUT = 100 
 )
 
@@ -326,6 +326,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
                         rf.mu.Unlock()
                     }
                 
+                
             }
         }
     }()
@@ -345,8 +346,8 @@ func (rf *Raft) electionStarter() {
     rf.currentTerm = rf.currentTerm + 1
     rf.voteCounter = 1
 
-    for peerInPeers, _ := range rf.peers {
-        if rf.me != peerInPeers  {
+    for eachPeer, _ := range rf.peers {
+        if rf.me != eachPeer  {
 
             go func(peerInPeers int) {
                 
@@ -376,7 +377,7 @@ func (rf *Raft) electionStarter() {
 
                     rf.mu.Unlock()
                 }
-            }(peerInPeers)
+            }(eachPeer)
             
         }
 
