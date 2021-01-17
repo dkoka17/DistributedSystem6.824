@@ -23,8 +23,8 @@ import "../labrpc"
 import "math/rand"
 import "time"
 
-// import "bytes"
-// import "../labgob"
+import "bytes"
+import "../labgob"
 
 
 
@@ -119,6 +119,19 @@ func (rf *Raft) persist() {
     // e.Encode(rf.yyy)
     // data := w.Bytes()
     // rf.persister.SaveRaftState(data)
+    // w := new(bytes.Buffer)
+    // e := labgob.NewEncoder(w)
+    // e.Encode(rf.xxx)
+    // e.Encode(rf.yyy)
+    // data := w.Bytes()
+    // rf.persister.SaveRaftState(data)
+    w := new(bytes.Buffer)
+    e := labgob.NewEncoder(w)
+    e.Encode(rf.votedFor)
+    e.Encode(rf.log)
+    e.Encode(rf.currentTerm)
+    data := w.Bytes()
+    rf.persister.SaveRaftState(data)
 }
 
 
@@ -142,6 +155,20 @@ func (rf *Raft) readPersist(data []byte) {
     //   rf.xxx = xxx
     //   rf.yyy = yyy
     // }
+    r := bytes.NewBuffer(data)
+    d := labgob.NewDecoder(r)
+    var votedFor int
+    var log []LogEntry
+    var currentTerm int
+    if d.Decode(&votedFor) != nil || d.Decode(&log) != nil || d.Decode(&currentTerm) != nil {
+
+        panic("decode error")
+
+    } else {
+        rf.currentTerm = currentTerm
+        rf.votedFor = votedFor
+        rf.log = log
+    }
 }
 
 
@@ -176,6 +203,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
     // Your code here (2A, 2B).
     rf.mu.Lock()
     defer rf.mu.Unlock()
+    defer rf.persist() 
     reply.VoteGranted = false
     reply.Term = rf.currentTerm
     if args.Term < rf.currentTerm||(args.Term==rf.currentTerm&&rf.votedFor!=-1&&rf.votedFor!=args.CandidateId) {
@@ -258,6 +286,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
     if(rf.state == Leader){
         isLeader = true
         rf.log = append(rf.log, LogEntry{Command: command, Term: rf.currentTerm})
+        rf.persist()
         index = len(rf.log) - 1
         rf.matchIndex[rf.me] = index
         rf.nextIndex[rf.me] = index + 1
@@ -315,11 +344,18 @@ func Make(peers []*labrpc.ClientEnd, me int,
     rf.state = Follower
     rf.votedFor = -1
     rf.currentTerm = 0
-    
-    rf.nextIndex = make([]int, len(rf.peers))
-    rf.matchIndex = make([]int, len(rf.peers))
     rf.log = make([]LogEntry, 1)
     rf.applyCh = applyCh
+    
+    rf.mu.Lock()
+    rf.readPersist(persister.ReadRaftState())
+    rf.mu.Unlock()
+
+    rf.nextIndex = make([]int, len(rf.peers))
+    for i := range rf.nextIndex {
+        rf.nextIndex[i] = len(rf.log)
+    }
+    rf.matchIndex = make([]int, len(rf.peers))
     
     go func() {
         for {
@@ -348,7 +384,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
     }()
 
     // initialize from state persisted before a crash
-    rf.readPersist(persister.ReadRaftState())
+    //rf.readPersist(persister.ReadRaftState())
 
 
     return rf
@@ -360,6 +396,7 @@ func (rf *Raft) electionStarter() {
     var tm time.Duration = time.Duration(HEART_BEAT_TIMEOUT*3+rand.Intn(HEART_BEAT_TIMEOUT)) * time.Millisecond          
     rf.electTime.Reset(tm)
     rf.currentTerm = rf.currentTerm + 1
+    rf.persist()
     rf.voteCounter = 1
     
     for eachPeer, _ := range rf.peers {
@@ -381,6 +418,7 @@ func (rf *Raft) electionStarter() {
                 if rf.sendRequestVote(peerInPeers, &args, &reply) {
 
                     rf.mu.Lock()
+                    defer rf.mu.Unlock()
                     if reply.VoteGranted {
                         if rf.state == Candidate {
                             rf.voteCounter += 1
@@ -392,9 +430,10 @@ func (rf *Raft) electionStarter() {
                     } else if rf.currentTerm < reply.Term {
                         rf.currentTerm = reply.Term
                         rf.switchStateTo(Follower)
+                        rf.persist()
                     }
 
-                    rf.mu.Unlock()
+                    //rf.mu.Unlock()
                 }
             }(eachPeer)
 
@@ -429,8 +468,9 @@ func (rf *Raft) heartBeat() {
                 var reply Message
                 if rf.peers[peerInPeers].Call("Raft.AddEntries", &args, &reply) {
                     rf.mu.Lock()
+                    defer rf.mu.Unlock()
                     if rf.state != Leader {
-                        rf.mu.Unlock()
+                        //rf.mu.Unlock()
                         return
                     }
                     if reply.Success {
@@ -452,14 +492,25 @@ func (rf *Raft) heartBeat() {
 
                     } else {
                         if reply.Term<=rf.currentTerm {
-                            rf.nextIndex[peerInPeers] = args.PrevLogIndex-1             
+                            rf.nextIndex[peerInPeers] = reply.IndexForInfoKeeping
+                
+                            if reply.TermForInfoKeeping == -1 {
+                                //DPrintf("")
+                            }else{
+                                for k := args.PrevLogIndex-1; k >= 0; k-- {
+                                    if rf.log[k].Term == reply.TermForInfoKeeping {
+                                        rf.nextIndex[peerInPeers] = k+1
+                                        break
+                                    }
+                                }
+                            }
                         } else {
                             rf.currentTerm=reply.Term
                             rf.switchStateTo(Follower)
+                            rf.persist() 
                         }
                     }
-                    rf.mu.Unlock()
-
+                    //rf.mu.Unlock()
                 }
             }(peerInPeers)   
         }    
@@ -507,12 +558,15 @@ type Message struct {
     PrevLogIndex int        
     PrevLogTerm  int        
     Entries      []LogEntry 
-    LeaderCommit int        
+    LeaderCommit int  
+    TermForInfoKeeping  int 
+    IndexForInfoKeeping int       
 }
 
 func (rf *Raft) AddEntries(args *Message, reply *Message) {
     rf.mu.Lock()
     defer rf.mu.Unlock()
+    defer rf.persist()
     reply.Success = true
 
     if args.Term > rf.currentTerm {
@@ -529,6 +583,17 @@ func (rf *Raft) AddEntries(args *Message, reply *Message) {
     reply.Success = false
     if  args.PrevLogIndex + 1 > len(rf.log) || rf.log[(args.PrevLogIndex)].Term != args.PrevLogTerm {
         reply.Term = rf.currentTerm
+        if args.PrevLogIndex + 1 > len(rf.log) {
+            reply.IndexForInfoKeeping = len(rf.log)
+            reply.TermForInfoKeeping = -1
+        } else {
+            reply.TermForInfoKeeping = rf.log[args.PrevLogIndex].Term
+            IndexForInfoKeeping := args.PrevLogIndex
+            for rf.log[IndexForInfoKeeping-1].Term == reply.TermForInfoKeeping {
+                IndexForInfoKeeping--
+            }
+            reply.IndexForInfoKeeping = IndexForInfoKeeping
+        }
         return
     } 
 
