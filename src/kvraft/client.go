@@ -4,10 +4,12 @@ import "../labrpc"
 import "crypto/rand"
 import "math/big"
 
-
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
+    lastId int
+    leaderId int
+    clientId int64
 }
 
 func nrand() int64 {
@@ -21,6 +23,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+    ck.clientId = nrand() 
 	return ck
 }
 
@@ -39,6 +42,23 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
+    //requestId := ck.lastId + 1
+
+    for {
+        var response GetReply
+        getArg := GetArgs{}
+        getArg.Key = key
+        getArg.ClientId = ck.clientId
+        getArg.RequestId = ck.lastId + 1
+
+        status := ck.servers[ck.leaderId].Call("KVServer.Get", &getArg, &response)
+        if (!status||response.LeaderChecker) {
+            ck.leaderId=(ck.leaderId+1)%len(ck.servers)
+            continue
+        } 
+        ck.lastId=ck.lastId+1
+        return response.Value
+    }
 	return ""
 }
 
@@ -54,6 +74,24 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+    for {
+        var response PutAppendReply
+
+        appendObj:=PutAppendArgs{}
+        appendObj.Key=key
+        appendObj.ClientId=ck.clientId
+        appendObj.RequestId=ck.lastId+1
+        appendObj.Value=value
+        appendObj.Op=op
+
+        ok := ck.servers[ck.leaderId].Call("KVServer.PutAppend", &appendObj, &response)
+        if (!ok||response.LeaderChecker) {
+            ck.leaderId=(ck.leaderId+1)%len(ck.servers)
+            continue
+        }
+        ck.lastId=ck.lastId+1
+        return
+    }
 }
 
 func (ck *Clerk) Put(key string, value string) {
